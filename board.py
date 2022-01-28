@@ -1,6 +1,18 @@
 class Board:
-    def __init__(self, fen=None):
-        self.parseFen(fen)
+    def __init__(self, parent=None, move=None, fen=None):
+        if parent:
+            self.board = parent.board.copy()
+            self.turn = not parent.turn
+            self.castle = parent.castle
+            self.enPassant = parent.enPassant
+            self.hMove = parent.hMove + 1
+            self.fMove = parent.fMove
+            self.fMove += 1 if self.turn else 0
+
+            self.makeMove(move)
+
+        else:
+            self.parseFen(fen)
 
     #Utility Functions
     def parseFen(self, fen):
@@ -95,3 +107,135 @@ class Board:
         rank = idx >> 4
         file = chr((idx & 7) + 97)
         return f"{file}{rank}"
+
+    def getPieces(self, flag=0):
+        wp = []
+        bp = []
+
+        for i in range(8):
+            for j in range(8):
+                idx = (i << 4) + j
+                if self.board[idx]:
+                    if self.board[idx].isupper():
+                        wp.append(idx)
+                    else:
+                        bp.append(idx)
+
+        if flag == -1:
+            return bp
+        elif flag == 1:
+            return wp
+        else:
+            return wp, bp
+
+    #Movement
+    def makeMove(self, move):
+        #0b0000000 0000000 0000 : fromidx, toidx, promotion, flag
+        from_idx = move >> 11
+        to_idx = (move >> 4) & 0b1111111
+        promotion = (move >> 2) & 0b11
+        flag = move & 0b11
+        
+        self.board[from_idx], self.board[to_idx] = None, self.board[from_idx]
+        if flag == 0: #normal move
+            pass
+        elif flag == 1: #promotion
+            promotion_pieces = ('n', 'b', 'r', 'q')
+            if self.board[to_idx].isupper():
+                self.board[to_idx] = promotion_pieces[promotion].upper()
+            else:
+                self.board[to_idx] = promotion_pieces[promotion]
+        elif flag == 2: #enpassant
+            if self.turn:
+                self.board[to_idx + 16] = None
+            else:
+                self.board[to_idx - 16] = None
+        else: #castle
+            self.castle[1 if self.turn else 0] = 0
+            if to_idx > from_idx: #kingside castle
+                self.board[from_idx+1], self.board[to_idx+1] = self.board[to_idx+1], None
+            else: #queenside
+                self.board[from_idx-1], self.board[to_idx-2] = self.board[to_idx-2], None
+
+        #Update castle
+        if self.castle[0] or self.castle[1]:
+            if self.board[to_idx] == 'K':
+                self.castle[0] = 0
+            elif self.board[to_idx] == 'K':
+                self.castle[0] = 0
+            
+            if self.castle[0] & 1:
+                if 7 in (from_idx, to_idx):
+                    self.castle[0] &= 2
+            if self.castle[0] & 2:
+                if 0 in (from_idx, to_idx):
+                    self.castle[0] &= 1
+
+            if self.castle[1] & 1:
+                if 119 in (from_idx, to_idx):
+                    self.castle[1] &= 2
+            if self.castle[1] & 2:
+                if 112 in (from_idx, to_idx):
+                    self.castle[1] &= 1
+
+        #Update enPassant
+        if self.board[to_idx].lower() == 'p' and abs(to_idx - from_idx) == 32:
+            self.enPassant = (to_idx + from_idx) >> 1
+        else:
+            self.enPassant = None
+
+    def moveGenerator(self):
+        moves = []
+        left, right, up, down = -1, 1, 16, -16
+        directions = {'n':(up*2+left, up*2+right, left*2+up, 
+                          left*2+down, down*2+left, down*2+right,
+                          right*2+up, right*2+left),
+                      'b':(up+left, up+right, down+left, down+right),
+                      'r':(left, right, up, down),
+                      'q':(up+left, up+right, down+left, down+right,
+                           left, right, up, down),
+                      'k':(up+left, up+right, down+left, down+right,
+                           left, right, up, down)}
+        if self.turn:
+            directions['p'] = (up, up*2, up+left, up+right)
+        else:
+            directions['p'] = (down, down*2, down+left, down+right)
+
+        pieces = self.getPieces(1 if self.turn else -1)
+        for p in pieces:
+            scaffold = p << 11
+            p_type = self.board[p].lower()
+            for d in directions[p_type]:
+                current = p
+                for i in range(7):
+                    current += d
+                    if current & 136 != 0:
+                        break
+
+                    if self.board[current]:
+                        if (self.turn and self.board[current].isupper()) \
+                            or (not self.turn and self.board[current].islower()):
+                            break
+
+                    if p_type == 'p': #Pawn movement special cases
+                        if abs(d) == 16 and self.board[p + d]: #push into enemy
+                            break
+                        if abs(d) == 32 and (not p >> 4 in (1,6) or self.board[p + d]):
+                            break
+                        if abs(d) in (15, 17) and not self.board[current]:
+                            if current == self.enPassant:
+                                moves.append(scaffold+(current<<4)+2)
+                            break
+                        if current >> 4 in (0, 7): #promotion
+                            for promote in range(4):
+                                moves.append(scaffold+(current<<4)+(promote<<2)+1)
+                            break
+                    
+                    if p_type == 'k': #castling TO BE IMPLEMENTED
+                        pass
+
+                    moves.append(scaffold+(current<<4))
+                    if p_type in 'pnk':
+                        break
+
+        return moves
