@@ -3,7 +3,7 @@ class Board:
         if parent:
             self.board = parent.board.copy()
             self.turn = not parent.turn
-            self.castle = parent.castle
+            self.castle = parent.castle.copy()
             self.enPassant = parent.enPassant
             self.hMove = parent.hMove + 1
             self.fMove = parent.fMove
@@ -52,8 +52,6 @@ class Board:
         #move counters
         self.hMove = int(hMove)
         self.fMove = int(fMove)
-
-        print(self.getFen())
     
     def getFen(self):
         #piece positions
@@ -99,12 +97,12 @@ class Board:
                     for p in self.board[~i << 4:(~i << 4) + 8]), sep=' ')
 
     def coordToIdx(self, coord):
-        rank = int(coord[1])
+        rank = int(coord[1]) - 1
         file = ord(coord[0].lower()) - 97
         return (rank << 4) + file
 
     def idxToCoord(self, idx):
-        rank = idx >> 4
+        rank = (idx >> 4) + 1
         file = chr((idx & 7) + 97)
         return f"{file}{rank}"
 
@@ -184,12 +182,12 @@ class Board:
         else:
             self.enPassant = None
 
-    def moveGenerator(self):
+    def moveGenerator(self, attack=False):
         moves = []
         left, right, up, down = -1, 1, 16, -16
         directions = {'n':(up*2+left, up*2+right, left*2+up, 
                           left*2+down, down*2+left, down*2+right,
-                          right*2+up, right*2+left),
+                          right*2+up, right*2+down),
                       'b':(up+left, up+right, down+left, down+right),
                       'r':(left, right, up, down),
                       'q':(up+left, up+right, down+left, down+right,
@@ -212,17 +210,17 @@ class Board:
                     if current & 136 != 0:
                         break
 
-                    if self.board[current]:
+                    if self.board[current]: #break if own piece
                         if (self.turn and self.board[current].isupper()) \
                             or (not self.turn and self.board[current].islower()):
                             break
 
                     if p_type == 'p': #Pawn movement special cases
-                        if abs(d) == 16 and self.board[p + d]: #push into enemy
+                        if abs(d) == 16 and (attack or self.board[p + d]): #push into enemy
                             break
-                        if abs(d) == 32 and (not p >> 4 in (1,6) or self.board[p + d]):
+                        if abs(d) == 32 and (attack or not p >> 4 in (1,6) or self.board[current] or self.board[current - d//2]):
                             break
-                        if abs(d) in (15, 17) and not self.board[current]:
+                        if not attack and (abs(d) in (15, 17) and not self.board[current]):
                             if current == self.enPassant:
                                 moves.append(scaffold+(current<<4)+2)
                             break
@@ -231,11 +229,25 @@ class Board:
                                 moves.append(scaffold+(current<<4)+(promote<<2)+1)
                             break
                     
-                    if p_type == 'k': #castling TO BE IMPLEMENTED
-                        pass
+                    if p_type == 'k' and not attack: #castling TO BE IMPLEMENTED
+                        if (self.castle[not self.turn] & 1 and d == right) or \
+                            (self.castle[not self.turn] & 2 and d == left):
+                            if not self.board[current] and not self.board[current + d]:
+                                if not any(idx in self.attackSet() for idx in (p, current, current+d)):
+                                    moves.append(scaffold+((current+d)<<4)+3)
 
                     moves.append(scaffold+(current<<4))
+                    
                     if p_type in 'pnk':
+                        break
+                    
+                    if self.board[current]:
                         break
 
         return moves
+
+    def attackSet(self):
+        self.turn = not self.turn
+        attack = {(idx >> 4) & 0b1111111 for idx in self.moveGenerator(attack=True)}
+        self.turn = not self.turn
+        return attack
